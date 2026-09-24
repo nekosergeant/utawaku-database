@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>歌枠連続再生プレイヤー</title>
     <style>
-        body { font-family: sans-serif; background: #f5f5f5; padding: 10px; display: flex; flex-direction: column; align-items: center; position: relative; min-height: 95vh; }
+        body { font-family: sans-serif; background: #f5f5f5; padding: 10px; display: flex; flex-direction: column; align-items: center; position: relative; min-height: 95vh; box-sizing: border-box; }
         .box { width: 100%; max-width: 500px; background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
         input { padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
@@ -14,12 +14,11 @@
         .btn-play { background: #ff4757; color: white; width: 100%; margin-top: 5px; }
         .btn-reset { background: #ffa502; color: white; width: 100%; margin-bottom: 10px; font-weight: bold; }
         .player-container { width: 100%; max-width: 500px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+        #player { width: 100%; height: 100%; }
         table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 5px; }
         th, td { padding: 6px; border-bottom: 1px solid #eee; text-align: left; }
         th { background: #f9f9f9; cursor: pointer; }
         .now-playing { background: #ffe6e6; font-weight: bold; color: #ff0000; padding: 8px; border-radius: 4px; text-align: center; font-size: 13px; }
-        
-        /* 🏷️ バージョン情報のスタイル */
         .version-tag { position: absolute; bottom: 10px; right: 10px; font-size: 11px; color: #aaa; background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 4px; }
     </style>
 </head>
@@ -27,10 +26,9 @@
 
     <h2 style="color:#ff0000; font-size:18px; margin:5px;">🎵 歌枠連続再生プレイヤー</h2>
 
-    <!-- 強制リセットボタン -->
+    <!-- データ初期化 -->
     <div class="box" style="background: #fffbe6; border: 1px solid #ffe58f;">
         <button class="btn-reset" onclick="forceResetData()">⚠️ 最初にここを押してデータを完全にリセットする</button>
-        <div style="font-size: 11px; color: #666; text-align: center;">過去の古いデータを消去して、正しいテスト曲を読み込みます</div>
     </div>
 
     <!-- 曲登録 -->
@@ -38,22 +36,19 @@
         <div class="form-group">
             <input type="text" id="inTitle" placeholder="曲名">
             <input type="text" id="inSinger" placeholder="歌手">
-            <input type="text" id="inVid" placeholder="YouTube動画のURL、またはID">
-            <input type="number" id="inStart" placeholder="開始（秒） 例: 10">
-            <input type="number" id="inEnd" placeholder="終了（秒） 例: 20">
+            <input type="text" id="inVid" placeholder="YouTube動画ID（11桁の英数字のみ）">
+            <input type="number" id="inStart" placeholder="開始（秒）">
+            <input type="number" id="inEnd" placeholder="終了（秒）">
         </div>
         <button class="btn-add" onclick="addSong()">データベースに保存する</button>
     </div>
 
-    <!-- プレイヤー -->
+    <!-- YouTube公式プレイヤー（URLの手動結合を完全に廃止） -->
     <div class="player-container">
-        <iframe id="yt" src="" frameborder="0" allow="autoplay; encrypted-media" style="width:100%; height:100%; display:none;"></iframe>
-        <div id="ph" style="color:#aaa; display:flex; justify-content:center; align-items:center; height:100%; font-size:12px;">
-            曲を選んで再生ボタンを押してください
-        </div>
+        <div id="player"></div>
     </div>
 
-    <!-- 再生中 & 操作 -->
+    <!-- コントロール -->
     <div class="box">
         <div class="now-playing" id="np">再生中: なし</div>
         <button class="btn-play" onclick="playSel()">▶ チェックした曲を再生</button>
@@ -74,19 +69,23 @@
         </table>
     </div>
 
-    <!-- 🏷️ 画面右下にバージョンを表示 -->
-    <div class="version-tag">Version 1.0.0</div>
+    <!-- 🏷️ バージョン情報（これが2.0.0になれば反映完了です） -->
+    <div class="version-tag">Version 2.0.0</div>
 
     <script>
-        const storageKey = 'utawaku_version_release_v1';
-
+        const storageKey = 'utawaku_api_v2_0_0';
         const def = [
             { id: 1, title: "テスト1", singer: "サンプル", vid: "tpie6v_i5be", start: 10, end: 20 },
             { id: 2, title: "テスト2", singer: "サンプル", vid: "tpie6v_i5be", start: 30, end: 40 }
         ];
 
         let list = JSON.parse(localStorage.getItem(storageKey)) || def;
-        let queue = [], qIdx = 0, timer, asc = true;
+        let queue = [], qIdx = 0, timer, asc = true, player = null;
+
+        // YouTube IFrame APIの読み込み
+        const tag = document.createElement('script');
+        tag.src = "https://youtube.com";
+        document.body.appendChild(tag);
 
         window.onload = () => { render(); };
 
@@ -98,7 +97,7 @@
             ];
             localStorage.setItem(storageKey, JSON.stringify(list));
             render();
-            alert("データを完全に初期化しました！");
+            alert("データを初期化しました！");
         }
 
         function render() {
@@ -116,24 +115,14 @@
             });
         }
 
-        function extractID(str) {
-            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-            const match = str.match(regExp);
-            if (match && match.length === 11) {
-                return match;
-            }
-            return str.trim();
-        }
-
         function addSong() {
             const t = document.getElementById('inTitle').value;
             const s = document.getElementById('inSinger').value || '未設定';
-            const v = extractID(document.getElementById('inVid').value);
+            const v = document.getElementById('inVid').value.trim();
             const st = parseInt(document.getElementById('inStart').value);
             const ed = parseInt(document.getElementById('inEnd').value);
 
-            if (!t || !v || isNaN(st) || isNaN(ed)) { alert("すべての項目を正しく入力してください"); return; }
-            if (v.length !== 11) { alert("YouTubeの動画ID（11桁）を正しく取得できませんでした。"); return; }
+            if (!t || !v || isNaN(st) || isNaN(ed) || v.length !== 11) { alert("入力を正しく行ってください(IDは11桁)"); return; }
 
             list.push({ id: Date.now(), title: t, singer: s, vid: v, start: st, end: ed });
             localStorage.setItem(storageKey, JSON.stringify(list));
@@ -149,17 +138,14 @@
                 const s = list.find(item => item.id === parseInt(c.value));
                 if (s) queue.push(s);
             });
-            document.getElementById('ph').style.display = 'none';
-            document.getElementById('yt').style.display = 'block';
             load(0);
         }
 
+        // ★URL文字列を一切作らず、公式APIに動画IDの文字データを直接渡す処理
         function load(idx) {
             if (queue.length === 0 || idx >= queue.length) {
                 document.getElementById('np').innerText = "すべての曲の再生が終了しました";
-                document.getElementById('yt').src = "";
-                document.getElementById('yt').style.display = 'none';
-                document.getElementById('ph').style.display = 'flex';
+                if (player) { player.destroy(); player = null; }
                 clearInterval(timer);
                 return;
             }
@@ -167,10 +153,29 @@
             const s = queue[idx];
             document.getElementById('np').innerText = `再生中: ${s.title} (${s.singer})`;
 
-            const iframe = document.getElementById('yt');
-            iframe.src = "https://youtube.com" + s.vid + "?start=" + s.start + "&autoplay=1";
-
             clearInterval(timer);
+
+            if (player) {
+                // すでにプレイヤーがある場合は、動画IDだけを公式の命令で入れ替える
+                player.loadVideoById({
+                    videoId: s.vid,
+                    startSeconds: s.start
+                });
+                startTimer(s);
+            } else {
+                // 初回のみプレイヤーを公式の仕組みで生成する
+                player = new YT.Player('player', {
+                    videoId: s.vid,
+                    playerVars: { 'start': s.start, 'autoplay': 1, 'rel': 0 },
+                    events: {
+                        'onReady': () => { startTimer(s); },
+                        'onStateChange': (e) => { if (e.data == YT.PlayerState.ENDED) load(qIdx + 1); }
+                    }
+                });
+            }
+        }
+
+        function startTimer(s) {
             let startT = Date.now();
             timer = setInterval(() => {
                 let passed = (Date.now() - startT) / 1000;
